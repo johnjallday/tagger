@@ -1,0 +1,17 @@
+[package]
+name = "tagger"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] } # Enable serde support
+toml = "0.7"                                      # For TOML serialization
+serde = { version = "1.0", features = ["derive"] } # For serialization
+walkdir = "2.3"
+log = "0.4"
+env_logger = "0.9"
+
+
+[dev-dependencies]
+tempfile = "3.3"
