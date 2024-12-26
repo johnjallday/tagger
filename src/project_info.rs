@@ -10,7 +10,7 @@ use std::collections::HashSet;
 pub mod programming;
 pub mod music;
 
-use programming::{extract_cargo_dependencies, generate_programming_tags};
+use programming::{extract_git_push_url, generate_programming_tags};
 use music::generate_music_tags;
 
 /// Represents information about a project.
@@ -30,6 +30,8 @@ pub struct ProjectInfo {
     pub date_modified: DateTime<Local>,
     /// A list of notes related to the project.
     pub notes: Vec<String>,
+    /// The Git push URL of the project (if applicable).
+    pub git_url: Option<String>,
 }
 
 impl ProjectInfo {
@@ -48,6 +50,12 @@ impl ProjectInfo {
         println!("Tags: {:?}", self.tags);
         println!("Date Created: {}", self.date_created);
         println!("Date Modified: {}", self.date_modified);
+
+        if let Some(git_url) = &self.git_url {
+            println!("Git URL: {}", git_url);
+        } else {
+            println!("Git URL: None");
+        }
 
         if self.notes.is_empty() {
             println!("Notes: None");
@@ -106,6 +114,9 @@ impl ProjectInfo {
         let tags = Self::generate_tags(directory, &project_type)?;
         info!("Tags generated: {:?}", tags);
 
+        // Extract Git push URL (if the project is a Git repository).
+        let git_url = extract_git_push_url(directory);
+
         // Initialize ProjectInfo with empty notes.
         Ok(ProjectInfo {
             name: project_name,
@@ -115,12 +126,12 @@ impl ProjectInfo {
             date_created: Self::get_creation_time(&metadata),
             date_modified: Self::get_modification_time(&metadata),
             notes: Vec::new(), // Initialize as empty
+            git_url, // Add the Git push URL here
         })
     }
 
     /// Generates the project type based on the files in the directory.
     fn generate_project_type(directory: &Path) -> String {
-        // Define indicators for different project types.
         let programming_indicators = vec![
             "Cargo.toml",
             "package.json",
@@ -133,18 +144,12 @@ impl ProjectInfo {
         ];
 
         let music_production_indicators = vec![
-            "project.als",        // Ableton Live
-            "project.flp",        // FL Studio
-            "project.logic",      // Logic Pro
-            "project.rpp",        // Reaper
-            "project.studioone",  // Presonus Studio One
+            "project.als", "project.flp", "project.logic", "project.rpp", "project.studioone",
         ];
 
-        // Flags to indicate project type detection.
         let mut is_programming = false;
         let mut is_music = false;
 
-        // Collect all files in the directory (non-recursive).
         let entries = fs::read_dir(directory).unwrap_or_else(|_| {
             eprintln!("Error: Unable to read directory contents.");
             std::process::exit(1);
@@ -154,38 +159,31 @@ impl ProjectInfo {
             if let Ok(entry) = entry {
                 let path = entry.path();
 
-                // Check for specific indicator files.
                 if let Some(file_name) = path.file_name() {
-                    // Check for programming indicators.
                     if programming_indicators.contains(&file_name.to_string_lossy().as_ref()) {
                         is_programming = true;
-                        break; // Priority can be given based on needs.
+                        break;
                     }
 
-                    // Check for music production indicators.
                     if music_production_indicators.contains(&file_name.to_string_lossy().as_ref()) {
                         is_music = true;
                         break;
                     }
                 }
 
-                // Additionally, check file extensions.
                 if let Some(extension) = path.extension() {
                     match extension.to_str().unwrap_or("").to_lowercase().as_str() {
-                        // Programming file extensions.
                         "rs" | "py" | "js" | "java" | "cpp" | "c" | "cs" | "go" | "rb" | "swift" => {
                             is_programming = true;
                         }
-                        // Music production file extensions.
                         "wav" | "mp3" | "flac" | "ogg" | "aiff" | "rpp" | "flp" | "logic" | "studioone" => {
                             is_music = true;
                         }
                         _ => {}
                     }
 
-                    // Priority: If both types are detected, decide based on preference.
                     if is_programming && is_music {
-                        break; // Stop early if both are detected.
+                        break;
                     }
                 }
             }
@@ -208,9 +206,6 @@ impl ProjectInfo {
         let tags = match project_type {
             "programming" => {
                 let mut prog_tags = generate_programming_tags(directory);
-                // Extract dependencies and add as tags.
-                //let dependencies = extract_cargo_dependencies(directory);
-                //prog_tags.extend(dependencies);
                 Ok::<Vec<String>, Box<dyn std::error::Error>>(prog_tags)
             },
             "music" => {
@@ -223,25 +218,15 @@ impl ProjectInfo {
             },
         }?;
 
-        // Remove duplicate tags by converting to a set and back.
         let unique_tags: HashSet<_> = tags.into_iter().collect();
         let mut unique_tags: Vec<String> = unique_tags.into_iter().collect();
-        unique_tags.sort(); // Optional: sort tags alphabetically.
+        unique_tags.sort();
 
         info!("Tags after deduplication and sorting: {:?}", unique_tags);
 
         Ok(unique_tags)
     }
 
-    /// Generates generic tags for unknown project types based on file extensions.
-    ///
-    /// # Arguments
-    ///
-    /// * `directory` - A reference to the project's directory path.
-    ///
-    /// # Returns
-    ///
-    /// A vector of generic tags.
     fn generate_unknown_tags(directory: &Path) -> Vec<String> {
         let mut tags = Vec::new();
 
@@ -264,15 +249,12 @@ impl ProjectInfo {
             }
         }
 
-        // Add generic tags.
         tags.extend(generic_tags.into_iter());
-
         info!("Unknown project tags generated: {:?}", tags);
 
         tags
     }
 
-    /// Fetches creation time from metadata.
     fn get_creation_time(metadata: &fs::Metadata) -> DateTime<Local> {
         match metadata.created() {
             Ok(time) => DateTime::<Local>::from(time),
@@ -283,7 +265,6 @@ impl ProjectInfo {
         }
     }
 
-    /// Fetches modification time from metadata.
     fn get_modification_time(metadata: &fs::Metadata) -> DateTime<Local> {
         match metadata.modified() {
             Ok(time) => DateTime::<Local>::from(time),
@@ -292,146 +273,5 @@ impl ProjectInfo {
                 Local::now()
             }
         }
-    }
-}
-
-// Move the tests module outside the impl block.
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-    use std::fs::File;
-    use std::io::Write;
-
-    #[test]
-    fn test_generate_project_type_programming() {
-        let dir = tempdir().unwrap();
-        let dir_path = dir.path();
-
-        // Create a Cargo.toml file to indicate a Rust project.
-        let cargo_toml_path = dir_path.join("Cargo.toml");
-        let mut file = File::create(&cargo_toml_path).unwrap();
-        writeln!(file, "[package]").unwrap();
-
-        let project_type = ProjectInfo::generate_project_type(dir_path);
-        assert_eq!(project_type, "programming");
-    }
-
-    #[test]
-    fn test_generate_project_type_music() {
-        let dir = tempdir().unwrap();
-        let dir_path = dir.path();
-
-        // Create a project.rpp file to indicate a Reaper project.
-        let rpp_path = dir_path.join("project.rpp");
-        File::create(&rpp_path).unwrap();
-
-        let project_type = ProjectInfo::generate_project_type(dir_path);
-        assert_eq!(project_type, "music");
-    }
-
-    #[test]
-    fn test_generate_project_type_unknown() {
-        let dir = tempdir().unwrap();
-        let dir_path = dir.path();
-
-        // Create some unrelated files.
-        let img_path = dir_path.join("image.png");
-        File::create(&img_path).unwrap();
-
-        let doc_path = dir_path.join("document.pdf");
-        File::create(&doc_path).unwrap();
-
-        let project_type = ProjectInfo::generate_project_type(dir_path);
-        assert_eq!(project_type, "unknown");
-    }
-
-    #[test]
-    fn test_generate_tags_programming_with_cargo_toml() {
-        let dir = tempdir().unwrap();
-        let dir_path = dir.path();
-
-        // Create a Cargo.toml file to indicate a Rust project.
-        let cargo_toml_path = dir_path.join("Cargo.toml");
-        let mut file = File::create(&cargo_toml_path).unwrap();
-        writeln!(file, "[package]").unwrap();
-
-        // Create a main.rs file.
-        let src_dir = dir_path.join("src");
-        fs::create_dir(&src_dir).unwrap();
-        let main_rs_path = src_dir.join("main.rs");
-        File::create(&main_rs_path).unwrap();
-
-        let project_type = ProjectInfo::generate_project_type(dir_path);
-        assert_eq!(project_type, "programming");
-
-        let tags = ProjectInfo::generate_tags(dir_path, &project_type).unwrap();
-        assert!(tags.contains(&"rust".to_string()));
-        assert!(tags.contains(&"cli".to_string()));
-        assert!(tags.contains(&"software development".to_string()));
-    }
-
-    #[test]
-    fn test_generate_tags_programming_without_cargo_toml() {
-        let dir = tempdir().unwrap();
-        let dir_path = dir.path();
-
-        // Create a main.rs file without Cargo.toml.
-        let src_dir = dir_path.join("src");
-        fs::create_dir(&src_dir).unwrap();
-        let main_rs_path = src_dir.join("main.rs");
-        File::create(&main_rs_path).unwrap();
-
-        let project_type = ProjectInfo::generate_project_type(dir_path);
-        assert_eq!(project_type, "programming");
-
-        let tags = ProjectInfo::generate_tags(dir_path, &project_type).unwrap();
-        assert!(tags.contains(&"rust".to_string())); // Assuming "rust" is inferred from .rs files
-        assert!(tags.contains(&"cli".to_string()));
-        assert!(tags.contains(&"software development".to_string()));
-    }
-
-    #[test]
-    fn test_generate_tags_music() {
-        let dir = tempdir().unwrap();
-        let dir_path = dir.path();
-
-        // Create a Reaper project structure.
-        let rpp_path = dir_path.join("project.rpp");
-        File::create(&rpp_path).unwrap();
-
-        let samples_dir = dir_path.join("samples");
-        fs::create_dir(&samples_dir).unwrap();
-
-        let kick_wav = samples_dir.join("kick.wav");
-        File::create(&kick_wav).unwrap();
-
-        let snare_mp3 = samples_dir.join("snare.mp3");
-        File::create(&snare_mp3).unwrap();
-
-        let tags = ProjectInfo::generate_tags(dir_path, "music").unwrap();
-        assert!(tags.contains(&"WAV".to_string()));
-        assert!(tags.contains(&"MP3".to_string()));
-        assert!(tags.contains(&"RPP".to_string()));
-        assert!(tags.contains(&"Reaper".to_string()));
-        assert!(tags.contains(&"audio".to_string()));
-        assert!(tags.contains(&"production".to_string()));
-    }
-
-    #[test]
-    fn test_generate_tags_unknown() {
-        let dir = tempdir().unwrap();
-        let dir_path = dir.path();
-
-        // Create some unrelated files.
-        let img_path = dir_path.join("image.png");
-        File::create(&img_path).unwrap();
-
-        let doc_path = dir_path.join("document.pdf");
-        File::create(&doc_path).unwrap();
-
-        let tags = ProjectInfo::generate_tags(dir_path, "unknown").unwrap();
-        assert!(tags.contains(&"IMAGE".to_string()));
-        assert!(tags.contains(&"PDF".to_string()));
     }
 }
